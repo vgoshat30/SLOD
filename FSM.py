@@ -216,7 +216,7 @@ def get_function_str(netlist: hal_py.Netlist, function: hal_py.BooleanFunction) 
 
     net_indexes_str = str(function)
     pin_names_str = net_indexes_str
-    net2pin_dict = {}
+    pin2net_dict = {}
     net_names = function.get_variables()
     for net_str in net_names:
         net = netlist.get_net_by_id(int(net_str))
@@ -237,13 +237,11 @@ def get_function_str(netlist: hal_py.Netlist, function: hal_py.BooleanFunction) 
         gate_name = gate_name.replace('_', '')
         pin_display_name = pin_name+gate_name
         net_display_name = 'net'+net_str
-        net2pin_dict[net_display_name] = pin_display_name
+        pin2net_dict[pin_display_name] = net_str
         # Avoid replacing two (for example) first digits of a three digit number
         pin_names_str = re.sub(net_str+'\\b', sign_char+pin_display_name, pin_names_str)
-        net_indexes_str = re.sub(net_str+'\\b', sign_char+net_display_name, net_indexes_str)
-    net_indexes_str = net_indexes_str.replace(HAL_NOT_CHAR, SYMPY_NOT_CHAR)
     pin_names_str = pin_names_str.replace(HAL_NOT_CHAR, SYMPY_NOT_CHAR)
-    return pin_names_str, net_indexes_str, net2pin_dict
+    return pin_names_str, pin2net_dict
 
 
 def analyze_fsm(netlist_path: str, lib_path: str, print_functions: bool = False,
@@ -287,14 +285,13 @@ def analyze_fsm(netlist_path: str, lib_path: str, print_functions: bool = False,
     # Section 4 - Find logical function for each of the state bits (FFs)
     state_functions = []
     state_functions_str = []
-    net2pin_dicts = []
+    pin2net_dicts = []
     for state_bit_ind, flipflop in enumerate(seq_gates):
         cur_func = get_ff_input_func(netlist, flipflop)
         state_functions.append(cur_func)
-        print_str, export_str, export_dict = get_function_str(netlist, cur_func)
-        # FIXME: export_str and not print_str
+        print_str, export_dict = get_function_str(netlist, cur_func)
         state_functions_str.append(print_str)
-        net2pin_dicts.append(export_dict)
+        pin2net_dicts.append(export_dict)
         if print_functions:
             print("\nBoolean function of bit {}:\n\n\t{}\n".format(state_bit_ind, print_str))
 
@@ -318,7 +315,7 @@ def analyze_fsm(netlist_path: str, lib_path: str, print_functions: bool = False,
                 argspool.increment_args()
             dot_file.write("}")
 
-    return state_functions_str, net2pin_dicts
+    return state_functions_str, pin2net_dicts
 
 
 if __name__ == "__main__":
