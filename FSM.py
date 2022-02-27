@@ -1,6 +1,4 @@
 # Environment and HAL initialization
-import imp
-from pickle import NONE
 import sys, os
 HAL_BASE = "/usr/local/"
 os.environ["HAL_BASE_PATH"] = HAL_BASE
@@ -9,13 +7,14 @@ import hal_py
 hal_py.plugin_manager.load_all_plugins()
 from hal_plugins import graph_algorithm
 from ArgsPool import ArgsPool
-from typing import List, Union
+from typing import Dict, List, Union, Tuple
 import re
 
 
 ZERO = hal_py.BooleanFunction.Value.ZERO
 ONE =  hal_py.BooleanFunction.Value.ONE
-NOT_CHAR = '~'
+HAL_NOT_CHAR = '!'
+SYMPY_NOT_CHAR = '~'
 
 
 def clear_all(netlist: hal_py.Netlist):
@@ -197,7 +196,8 @@ def get_ff_input_func(netlist: hal_py.Netlist, flipflop: hal_py.Gate) -> hal_py.
     return func
 
 
-def get_function_str(netlist: hal_py.Netlist, function: hal_py.BooleanFunction) -> str:
+def get_function_str(netlist: hal_py.Netlist, function: hal_py.BooleanFunction) \
+    -> Tuple[str, str, Dict[str, str]]:
     """Get a string describing a given boolean function with gate names and pin names
     instead of net IDs.
     For example, pin Q of gate _771_ will be 'Q_771'.
@@ -209,13 +209,18 @@ def get_function_str(netlist: hal_py.Netlist, function: hal_py.BooleanFunction) 
         function (hal_py.BooleanFunction): The funciton to print
 
     Returns:
-        str: The result print-ready string
+        Tuple[str, str]: Print-ready strings of the function
+            First str: Arguments are displayed as pin name (Q_619, INPUT2, ...)
+            Second str: Arguments are displayes as net indexes with prefix 'net' (net56, net64, ...)
     """
 
-    fucntion_str = str(function)
+    net_indexes_str = str(function)
+    pin_names_str = net_indexes_str
+    net2pin_dict = {}
     net_names = function.get_variables()
     for net_str in net_names:
         net = netlist.get_net_by_id(int(net_str))
+        sign_char = ''
         if net.is_global_input_net():
             pin_name = netlist.get_net_by_id(int(net_str)).get_name()
             pin_name = pin_name.replace('(', '')
@@ -226,16 +231,23 @@ def get_function_str(netlist: hal_py.Netlist, function: hal_py.BooleanFunction) 
             gate_name = source_endpoint.get_gate().get_name()
             pin_name = source_endpoint.get_pin()
             if pin_name == 'QN':
-                pin_name = NOT_CHAR + pin_name[:-1]
+                pin_name = pin_name[:-1]
+                sign_char = HAL_NOT_CHAR
             pin_name += '_'
         gate_name = gate_name.replace('_', '')
+        pin_display_name = pin_name+gate_name
+        net_display_name = 'net'+net_str
+        net2pin_dict[net_display_name] = pin_display_name
         # Avoid replacing two (for example) first digits of a three digit number
-        fucntion_str = re.sub(net_str+'\\b', pin_name+gate_name, fucntion_str)
-    fucntion_str = fucntion_str.replace('!', NOT_CHAR)
-    return fucntion_str
+        pin_names_str = re.sub(net_str+'\\b', sign_char+pin_display_name, pin_names_str)
+        net_indexes_str = re.sub(net_str+'\\b', sign_char+net_display_name, net_indexes_str)
+    net_indexes_str = net_indexes_str.replace(HAL_NOT_CHAR, SYMPY_NOT_CHAR)
+    pin_names_str = pin_names_str.replace(HAL_NOT_CHAR, SYMPY_NOT_CHAR)
+    return pin_names_str, net_indexes_str, net2pin_dict
 
 
-def analyze_fsm(netlist_path: str, lib_path: str, print_functions: bool, print_args: bool, result_filename: str=None):
+def analyze_fsm(netlist_path: str, lib_path: str, print_functions: bool = False,
+                print_args: bool = False, result_filename: str = None)-> List[str]:
     """Main function of the module. Finds a control path FSM in a netlist and generates
     a .dot file describing the states transitions.
     - Each nod in the graph is described by the state vector and each edge is labeled by the
@@ -250,6 +262,9 @@ def analyze_fsm(netlist_path: str, lib_path: str, print_functions: bool, print_a
         print_functions (bool): If True, the boolean functions are printed
         print_args (bool): If True, each state function's arguments iteration will be printed
         result_filename (str): The file name of the .dot output file (without extention)
+
+    Returns:
+        List[str]: List of strings of the logical functions for each state bit
     """
     
     netlist = hal_py.NetlistFactory.load_netlist(netlist_path, lib_path)
@@ -271,12 +286,17 @@ def analyze_fsm(netlist_path: str, lib_path: str, print_functions: bool, print_a
     
     # Section 4 - Find logical function for each of the state bits (FFs)
     state_functions = []
+    state_functions_str = []
+    net2pin_dicts = []
     for state_bit_ind, flipflop in enumerate(seq_gates):
         cur_func = get_ff_input_func(netlist, flipflop)
         state_functions.append(cur_func)
-        cur_str = get_function_str(netlist, cur_func)
+        print_str, export_str, export_dict = get_function_str(netlist, cur_func)
+        # FIXME: export_str and not print_str
+        state_functions_str.append(print_str)
+        net2pin_dicts.append(export_dict)
         if print_functions:
-            print("\nBoolean function of bit {}:\n\n\t{}\n".format(state_bit_ind, cur_str))
+            print("\nBoolean function of bit {}:\n\n\t{}\n".format(state_bit_ind, print_str))
 
     # Sections 5, 6 - Find state transitions of the FSM
     if result_filename is not None:
@@ -298,14 +318,14 @@ def analyze_fsm(netlist_path: str, lib_path: str, print_functions: bool, print_a
                 argspool.increment_args()
             dot_file.write("}")
 
+    return state_functions_str, net2pin_dicts
+
 
 if __name__ == "__main__":
     # Part 1 - Simple FSM
-    analyze_fsm("/home/hwsec/HW3/project2_cipher_v1.v",
-                "/home/hwsec/HW3/NangateOpenCellLibrary_functional.lib",
+    analyze_fsm("./project2_cipher_v1.v", "./NangateOpenCellLibrary_functional.lib",
                 print_functions=True, print_args=False, result_filename="fsm1")
 
     # Part 2 - Obfuscated FSM
-    analyze_fsm("/home/hwsec/HW3/project2_cipher_v2_obfuscated.v",
-                "/home/hwsec/HW3/NangateOpenCellLibrary_functional.lib",
+    analyze_fsm("./project2_cipher_v2_obfuscated.v", "./NangateOpenCellLibrary_functional.lib",
                 print_functions=True, print_args=False, result_filename="fsm2")
