@@ -1,5 +1,9 @@
 # Environment and HAL initialization
+from operator import is_
 import sys, os
+from xmlrpc.client import boolean
+
+from click import password_option
 HAL_BASE = "/usr/local/"
 os.environ["HAL_BASE_PATH"] = HAL_BASE
 sys.path.append(HAL_BASE+"lib/")
@@ -15,6 +19,25 @@ ZERO = hal_py.BooleanFunction.Value.ZERO
 ONE =  hal_py.BooleanFunction.Value.ONE
 HAL_NOT_CHAR = '!'
 SYMPY_NOT_CHAR = '~'
+
+
+class PosNegNet():
+    def __init__(self, net: Union[hal_py.Net, str], is_negative: boolean) -> None:
+        if is_negative:
+            self.pos = None
+            self.neg = str(net)
+        else:
+            self.pos = str(net)
+            self.neg = None
+
+    def add_net(self, net: hal_py.Net, is_negative: boolean):
+        if is_negative:
+            self.neg = str(net)
+        else:
+            self.pos = str(net)
+
+    def __str__(self) -> str:
+        return "PosNet - {}, NegNet - {}".format(self.pos, self.neg)
 
 
 def clear_all(netlist: hal_py.Netlist):
@@ -60,7 +83,7 @@ def get_ffs(netlist_or_module: Union[hal_py.Netlist, hal_py.Module]) -> List[hal
     Get list of the flip flops (gates containing 'FF' in the name) in a netlist or a module
 
     Args:
-        netlist_or_module (Union[hal_py.Net, hal_py.Module]): Netlist or module
+        netlist_or_module (Union[hal_py.Netlist, hal_py.Module]): Netlist or module
 
     Returns:
         List[hal_py.Gate]: All the flip flops
@@ -74,7 +97,7 @@ def get_not_ffs(netlist_or_module: Union[hal_py.Netlist, hal_py.Module]) -> List
     Oposite of the function get_ffs
 
     Args:
-        netlist_or_module (Union[hal_py.Net, hal_py.Module]): Netlist or module
+        netlist_or_module (Union[hal_py.Netlist, hal_py.Module]): Netlist or module
 
     Returns:
         List[hal_py.Gate]: All the gates that ARE NOT flip flops
@@ -181,6 +204,7 @@ def get_ff_input_func(netlist: hal_py.Netlist, flipflop: hal_py.Gate) -> hal_py.
     Get boolean function of the input to a given FF
 
     Args:
+        netlist (hal_py.Netlist): The netlist in which the flip flops are
         flipflop (hal_py.Gate): The FF which input function to calculate
 
     Returns:
@@ -197,9 +221,9 @@ def get_ff_input_func(netlist: hal_py.Netlist, flipflop: hal_py.Gate) -> hal_py.
 
 
 def get_function_str(netlist: hal_py.Netlist, function: hal_py.BooleanFunction) \
-    -> Tuple[str, str, Dict[str, str]]:
+    -> Tuple[str, Dict[str, str]]:
     """Get a string describing a given boolean function with gate names and pin names
-    instead of net IDs.
+    instead of net IDs. Also get a dictionary that translates from the pin names to net IDs.
     For example, pin Q of gate _771_ will be 'Q_771'.
     Global input nets are treated as nets of gate _Global_ with the net name as the pin name.
     For example, global input INPUT(0) will be 'INPUT0'
@@ -209,9 +233,9 @@ def get_function_str(netlist: hal_py.Netlist, function: hal_py.BooleanFunction) 
         function (hal_py.BooleanFunction): The funciton to print
 
     Returns:
-        Tuple[str, str]: Print-ready strings of the function
-            First str: Arguments are displayed as pin name (Q_619, INPUT2, ...)
-            Second str: Arguments are displayes as net indexes with prefix 'net' (net56, net64, ...)
+        Tuple[str, Dict[str, str]]: 
+            str: Print-ready string of the function with arguments as pin names (Q_619, INPUT2, ...)
+            Dict[str, str]: Dictionary with argument names (pin names) as keys and net IDs as values
     """
 
     net_indexes_str = str(function)
@@ -221,6 +245,7 @@ def get_function_str(netlist: hal_py.Netlist, function: hal_py.BooleanFunction) 
     for net_str in net_names:
         net = netlist.get_net_by_id(int(net_str))
         sign_char = ''
+        is_negative = False
         if net.is_global_input_net():
             pin_name = netlist.get_net_by_id(int(net_str)).get_name()
             pin_name = pin_name.replace('(', '')
@@ -231,13 +256,16 @@ def get_function_str(netlist: hal_py.Netlist, function: hal_py.BooleanFunction) 
             gate_name = source_endpoint.get_gate().get_name()
             pin_name = source_endpoint.get_pin()
             if pin_name == 'QN':
+                is_negative = True
                 pin_name = pin_name[:-1]
                 sign_char = HAL_NOT_CHAR
             pin_name += '_'
         gate_name = gate_name.replace('_', '')
         pin_display_name = pin_name+gate_name
-        net_display_name = 'net'+net_str
-        pin2net_dict[pin_display_name] = net_str
+        if pin_display_name in pin2net_dict:
+            pin2net_dict[pin_display_name].add_net(net_str, is_negative)
+        else:
+            pin2net_dict[pin_display_name] = PosNegNet(net_str, is_negative)
         # Avoid replacing two (for example) first digits of a three digit number
         pin_names_str = re.sub(net_str+'\\b', sign_char+pin_display_name, pin_names_str)
     pin_names_str = pin_names_str.replace(HAL_NOT_CHAR, SYMPY_NOT_CHAR)
@@ -245,13 +273,14 @@ def get_function_str(netlist: hal_py.Netlist, function: hal_py.BooleanFunction) 
 
 
 def analyze_fsm(netlist_path: str, lib_path: str, print_functions: bool = False,
-                print_args: bool = False, result_filename: str = None)-> List[str]:
+                print_args: bool = False, result_filename: str = None) \
+                    -> Tuple[hal_py.Netlist, List[hal_py.BooleanFunction]]:
     """Main function of the module. Finds a control path FSM in a netlist and generates
     a .dot file describing the states transitions.
     - Each nod in the graph is described by the state vector and each edge is labeled by the
       input vector.
     - If Only one edge is going out of a node, the label can be ignored (the input doesn't matter)
-    - to generate .pdf file out of the .dot file use:
+    - to generate .pdf file out of the .dot file using the Graphviz library:
         dot -Tpdf fsm.dot -o fsm.pdf
 
     Args:
@@ -262,7 +291,9 @@ def analyze_fsm(netlist_path: str, lib_path: str, print_functions: bool = False,
         result_filename (str): The file name of the .dot output file (without extention)
 
     Returns:
-        List[str]: List of strings of the logical functions for each state bit
+        Tuple[hal_py.Netlist, List[hal_py.BooleanFunction]]:
+            hal_py.Netlist: The analized netlist
+            List[hal_py.BooleanFunction]: List of the logical functions for each state bit
     """
     
     netlist = hal_py.NetlistFactory.load_netlist(netlist_path, lib_path)
@@ -284,14 +315,10 @@ def analyze_fsm(netlist_path: str, lib_path: str, print_functions: bool = False,
     
     # Section 4 - Find logical function for each of the state bits (FFs)
     state_functions = []
-    state_functions_str = []
-    pin2net_dicts = []
     for state_bit_ind, flipflop in enumerate(seq_gates):
         cur_func = get_ff_input_func(netlist, flipflop)
         state_functions.append(cur_func)
-        print_str, export_dict = get_function_str(netlist, cur_func)
-        state_functions_str.append(print_str)
-        pin2net_dicts.append(export_dict)
+        print_str, _ = get_function_str(netlist, cur_func)
         if print_functions:
             print("\nBoolean function of bit {}:\n\n\t{}\n".format(state_bit_ind, print_str))
 
@@ -315,7 +342,7 @@ def analyze_fsm(netlist_path: str, lib_path: str, print_functions: bool = False,
                 argspool.increment_args()
             dot_file.write("}")
 
-    return state_functions_str, pin2net_dicts
+    return netlist, state_functions
 
 
 if __name__ == "__main__":
