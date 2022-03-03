@@ -1,9 +1,5 @@
 # Environment and HAL initialization
-from operator import is_
 import sys, os
-from xmlrpc.client import boolean
-
-from click import password_option
 HAL_BASE = "/usr/local/"
 os.environ["HAL_BASE_PATH"] = HAL_BASE
 sys.path.append(HAL_BASE+"lib/")
@@ -22,19 +18,26 @@ SYMPY_NOT_CHAR = '~'
 
 
 class PosNegNet():
-    def __init__(self, net: Union[hal_py.Net, str], is_negative: boolean) -> None:
-        if is_negative:
-            self.pos = None
-            self.neg = str(net)
-        else:
-            self.pos = str(net)
-            self.neg = None
+    def __init__(self, netlist: hal_py.Netlist) -> None:
+        self.netlist = netlist
+        self.pos = None
+        self.neg = None
+        self.is_key = None
 
-    def add_net(self, net: hal_py.Net, is_negative: boolean):
-        if is_negative:
-            self.neg = str(net)
+    def add_net(self, net_name: str, is_negative: bool):
+        net = self.netlist.get_net_by_id(int(net_name))
+        if net.is_global_input_net():
+            self.is_key = True
         else:
-            self.pos = str(net)
+            self.is_key = False
+
+        if is_negative:
+            self.neg = net_name
+        else:
+            self.pos = net_name
+
+    def is_key_net(self):
+        return self.is_key
 
     def __str__(self) -> str:
         return "PosNet - {}, NegNet - {}".format(self.pos, self.neg)
@@ -220,7 +223,7 @@ def get_ff_input_func(netlist: hal_py.Netlist, flipflop: hal_py.Gate) -> hal_py.
     return func
 
 
-def get_function_str(netlist: hal_py.Netlist, function: hal_py.BooleanFunction) \
+def get_function_str(netlist: hal_py.Netlist, function: hal_py.BooleanFunction, key_group: int = None) \
     -> Tuple[str, Dict[str, str]]:
     """Get a string describing a given boolean function with gate names and pin names
     instead of net IDs. Also get a dictionary that translates from the pin names to net IDs.
@@ -251,6 +254,8 @@ def get_function_str(netlist: hal_py.Netlist, function: hal_py.BooleanFunction) 
             pin_name = pin_name.replace('(', '')
             pin_name = pin_name.replace(')', '')
             gate_name = ''
+            if key_group is not None:
+                pin_name += '_' + str(key_group)
         else:
             source_endpoint = netlist.get_net_by_id(int(net_str)).get_sources()[0]
             gate_name = source_endpoint.get_gate().get_name()
@@ -262,10 +267,9 @@ def get_function_str(netlist: hal_py.Netlist, function: hal_py.BooleanFunction) 
             pin_name += '_'
         gate_name = gate_name.replace('_', '')
         pin_display_name = pin_name+gate_name
-        if pin_display_name in pin2net_dict:
-            pin2net_dict[pin_display_name].add_net(net_str, is_negative)
-        else:
-            pin2net_dict[pin_display_name] = PosNegNet(net_str, is_negative)
+        if pin_display_name not in pin2net_dict:
+            pin2net_dict[pin_display_name] = PosNegNet(netlist)
+        pin2net_dict[pin_display_name].add_net(net_str, is_negative)
         # Avoid replacing two (for example) first digits of a three digit number
         pin_names_str = re.sub(net_str+'\\b', sign_char+pin_display_name, pin_names_str)
     pin_names_str = pin_names_str.replace(HAL_NOT_CHAR, SYMPY_NOT_CHAR)
