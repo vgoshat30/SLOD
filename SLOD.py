@@ -1,15 +1,21 @@
 # Environment and HAL initialization
 import sys, os
+
 HAL_BASE = "/usr/local/"
 os.environ["HAL_BASE_PATH"] = HAL_BASE
 sys.path.append(HAL_BASE+"lib/")
 import hal_py
 
 from typing import List, Tuple, Union
-from sympy.logic.boolalg import to_cnf, And, Or, Not
-from pysat.formula import CNF, IDPool
+
+from sympy import symbols
+from sympy.logic.boolalg import to_cnf, And, Or, Not, BooleanTrue
 from sympy.parsing.sympy_parser import parse_expr
 from sympy.logic import simplify_logic
+
+from pysat.formula import IDPool
+from pysat.solvers import Solver
+
 import hal_py
 import FSM
 
@@ -48,8 +54,10 @@ def str2sym_cnf(function_str: str) -> Union[Not, And]:
     return sympy_expr_cnf
 
 
-def sym2sat(sym_functions: Union[List[Union[Not, And]], Union[Not, And]]) -> Tuple[List[List[int]], IDPool]:
-    vars_pool = IDPool(start_from=1)
+def sym_cnf2sat(sym_functions: Union[List[Union[Not, And]], Union[Not, And]], 
+                vars_pool: IDPool = None) -> Tuple[List[List[int]], IDPool]:
+    if vars_pool is None:
+        vars_pool = IDPool()
     all_func_clauses_list = []
     if type(sym_functions) is not list:
         sym_functions_for_iter = [sym_functions]
@@ -67,18 +75,25 @@ def sym2sat(sym_functions: Union[List[Union[Not, And]], Union[Not, And]]) -> Tup
         return all_func_clauses_list[0], vars_pool
 
 
-def func2sym_cnf(netlist: hal_py.Netlist, functions: List[hal_py.BooleanFunction],
+def func2sym(netlist: hal_py.Netlist, functions: List[hal_py.BooleanFunction],
                  group_num: int) -> List[Union[Not, And]]:
     sym_functions = []
-    for func in functions:
+    if type(functions) is not list:
+        function_for_iter = [functions]
+    else:
+        function_for_iter = functions
+    for func in function_for_iter:
         func_str, pin2net_dict = FSM.get_function_str(netlist, func, group_num)
-        sym_cnf = str2sym_cnf(func_str)
-        sym_functions.append(sym_cnf)
-    return sym_functions
+        sym_func = parse_expr(func_str)
+        sym_functions.append(sym_func)
+    if type(functions) is not list:
+        return sym_functions[0]
+    else:
+        return sym_functions
 
 
 def decrypt(netlist: hal_py.Netlist, functions: List[hal_py.BooleanFunction]):
-    sym_cnf_functions = func2sym_cnf(netlist, functions, 2)
+    
 
     # TODO: Create sympy variables for the output vector y.
     # One output for each of the three functions and two variations
@@ -87,16 +102,54 @@ def decrypt(netlist: hal_py.Netlist, functions: List[hal_py.BooleanFunction]):
     # y1_2, y2_2, y3_2
     # Use sympy xor to add the constraint y1 ~= y2 <=> y1 ^ y2
 
-    cnf_clauses, vars_pool = sym2sat(sym_cnf_functions)
-    print(cnf_clauses)
+
+    # cnf_clauses, vars_pool = sym_cnf2sat(sym_functions)
+
+
+    y1_symbols = []
+    y2_symbols = []
+
+    C1_sym = BooleanTrue()
+    C2_sym = BooleanTrue()
+    y1_XOR_y2_sym = BooleanTrue()
+    for register_num, function in enumerate(functions):
+        out1_name = 'y{}_1'.format(register_num)
+        out2_name = 'y{}_2'.format(register_num)
+
+        y1_symbols.append(symbols(out1_name))
+        y2_symbols.append(symbols(out2_name))
+
+        function1_sym = func2sym(netlist, function, 1)
+        function2_sym = func2sym(netlist, function, 2)
+
+        # XNOR is equivalent to ==
+        C1_sym &= to_cnf(~(function1_sym ^ y1_symbols[-1]))
+        C2_sym &= to_cnf(~(function2_sym ^ y2_symbols[-1]))
+
+        # XOR is equivalent to !=
+        y1_XOR_y2_sym &= to_cnf(y1_symbols[-1] ^ y2_symbols[-1])
+    
+    F1_sym = C1_sym & C2_sym
+
+    F1_y1_XOR_y2_sym = F1_sym & y1_XOR_y2_sym
+    F1_y1_XOR_y2_sat, vars_pool = sym_cnf2sat(y1_XOR_y2_sym)
+    
+    s = Solver(name='g4', with_proof=True)
+    
+    s.append_formula(F1_y1_XOR_y2_sat)
+    is_sat = s.solve()
+    solution = s.get_model()
+    print(is_sat)
+    print(solution)
+    print(1)
 
 
 if __name__ == "__main__":
 
-    netlist, functions = FSM.analyze_fsm("./project2_cipher_v1.v", 
-        "./NangateOpenCellLibrary_functional.lib")
-    
-    # netlist, functions = FSM.analyze_fsm("./project2_cipher_v2_obfuscated.v", 
+    # netlist, functions = FSM.analyze_fsm("./project2_cipher_v1.v", 
     #     "./NangateOpenCellLibrary_functional.lib")
+    
+    netlist, functions = FSM.analyze_fsm("./project2_cipher_v2_obfuscated.v", 
+        "./NangateOpenCellLibrary_functional.lib")
 
     decrypt(netlist, functions)

@@ -57,7 +57,7 @@ if __name__ == "__main__":
         cur_func_str, pin2net_dict = FSM.get_function_str(netlist, cur_func)
 
         sym_cnf = SLOD.str2sym_cnf(cur_func_str)
-        cnf_clauses, pin2sat_pool = SLOD.sym2sat(sym_cnf)
+        cnf_clauses, pin2sat_pool = SLOD.sym_cnf2sat(sym_cnf)
         
         s.append_formula(cnf_clauses)
         is_sat = s.solve()
