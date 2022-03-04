@@ -22,22 +22,19 @@ class PosNegNet():
         self.netlist = netlist
         self.pos = None
         self.neg = None
-        self.is_key = None
+        self.is_key_net = None
 
     def add_net(self, net_name: str, is_negative: bool):
         net = self.netlist.get_net_by_id(int(net_name))
         if net.is_global_input_net():
-            self.is_key = True
+            self.is_key_net = True
         else:
-            self.is_key = False
+            self.is_key_net = False
 
         if is_negative:
             self.neg = net_name
         else:
             self.pos = net_name
-
-    def is_key_net(self):
-        return self.is_key
 
     def __str__(self) -> str:
         return "PosNet - {}, NegNet - {}".format(self.pos, self.neg)
@@ -224,7 +221,7 @@ def get_ff_input_func(netlist: hal_py.Netlist, flipflop: hal_py.Gate) -> hal_py.
 
 
 def get_function_str(netlist: hal_py.Netlist, function: hal_py.BooleanFunction, key_group: int = None) \
-    -> Tuple[str, Dict[str, str]]:
+    -> Tuple[str, Dict[str, PosNegNet]]:
     """Get a string describing a given boolean function with gate names and pin names
     instead of net IDs. Also get a dictionary that translates from the pin names to net IDs.
     For example, pin Q of gate _771_ will be 'Q_771'.
@@ -238,7 +235,11 @@ def get_function_str(netlist: hal_py.Netlist, function: hal_py.BooleanFunction, 
     Returns:
         Tuple[str, Dict[str, str]]: 
             str: Print-ready string of the function with arguments as pin names (Q_619, INPUT2, ...)
-            Dict[str, str]: Dictionary with argument names (pin names) as keys and net IDs as values
+            Dict[str, PosNegNet]: Dictionary with argument names (pin names) as keys and
+                Networks represented by PosNegNet as keys. Each PosNegNet object contains up to two
+                nets, one representing the original net and one representing its opposite
+                (for example Q and QN nets of the same flop flop).
+                Also, each PosNegNet object indicates whether the network is global input network or not
     """
 
     net_indexes_str = str(function)

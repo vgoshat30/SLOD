@@ -37,11 +37,11 @@ def literals2args(literals_vector, vars_pool, pins2net_dict):
 
 
 if __name__ == "__main__":
-    # netlist, functions = FSM.analyze_fsm("./project2_cipher_v1.v", 
-    #     "./NangateOpenCellLibrary_functional.lib")
-    
-    netlist, functions = FSM.analyze_fsm("./project2_cipher_v2_obfuscated.v", 
+    netlist, functions = FSM.analyze_fsm("./project2_cipher_v1.v", 
         "./NangateOpenCellLibrary_functional.lib")
+    
+    # netlist, functions = FSM.analyze_fsm("./project2_cipher_v2_obfuscated.v", 
+    #     "./NangateOpenCellLibrary_functional.lib")
 
     for cur_func_ind, cur_func in enumerate(functions):
         solution = None
